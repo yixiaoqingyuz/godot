@@ -1573,6 +1573,16 @@ void ScriptEditorDebugger::set_breakpoint(const String& p_path,int p_line,bool p
 }
 
 
+void ScriptEditorDebugger::reload_scripts() {
+
+	if (connection.is_valid()) {
+	       Array msg;
+	       msg.push_back("reload_scripts");
+	       ppeer->put_var(msg);
+       }
+}
+
+
 void ScriptEditorDebugger::_error_selected(int p_idx) {
 
 	error_stack->clear();
@@ -1721,15 +1731,17 @@ ScriptEditorDebugger::ScriptEditorDebugger(EditorNode *p_editor){
 		docontinue->set_tooltip(TTR("Continue"));
 		docontinue->connect("pressed",this,"debug_continue");
 
-		hbc->add_child( memnew( VSeparator) );
+		//hbc->add_child( memnew( VSeparator) );
 
 		back = memnew( Button );
 		hbc->add_child(back);
 		back->set_tooltip(TTR("Inspect Previous Instance"));
+		back->hide();
 
 		forward = memnew( Button );
 		hbc->add_child(forward);
 		forward->set_tooltip(TTR("Inspect Next Instance"));
+		forward->hide();
 
 
 		HSplitContainer *sc = memnew( HSplitContainer );
@@ -1802,7 +1814,7 @@ ScriptEditorDebugger::ScriptEditorDebugger(EditorNode *p_editor){
 		inspect_info->add_child(info_left);
 
 		inspect_scene_tree = memnew( Tree );
-		info_left->add_margin_child("Live Scene Tree:",inspect_scene_tree,true);
+		info_left->add_margin_child(TTR("Live Scene Tree:"),inspect_scene_tree,true);
 		inspect_scene_tree->connect("cell_selected",this,"_scene_tree_selected");
 		inspect_scene_tree->connect("item_collapsed",this,"_scene_tree_folded");
 
@@ -1817,7 +1829,7 @@ ScriptEditorDebugger::ScriptEditorDebugger(EditorNode *p_editor){
 		inspect_properties->set_show_categories(true);
 		inspect_properties->connect("object_id_selected",this,"_scene_tree_property_select_object");
 
-		info_right->add_margin_child("Remote Object Properties: ",inspect_properties,true);
+		info_right->add_margin_child(TTR("Remote Object Properties: "),inspect_properties,true);
 
 		inspect_scene_tree_timeout=EDITOR_DEF("debugger/scene_tree_refresh_interval",1.0);
 		inspect_edited_object_timeout=EDITOR_DEF("debugger/remote_inspect_refresh_interval",0.2);
@@ -1830,7 +1842,7 @@ ScriptEditorDebugger::ScriptEditorDebugger(EditorNode *p_editor){
 
 	{ //profiler
 		profiler = memnew( EditorProfiler );
-		profiler->set_name("Profiler");
+		profiler->set_name(TTR("Profiler"));
 		tabs->add_child(profiler);
 		profiler->connect("enable_profiling",this,"_profiler_activate");
 		profiler->connect("break_request",this,"_profiler_seeked");
@@ -1852,7 +1864,7 @@ ScriptEditorDebugger::ScriptEditorDebugger(EditorNode *p_editor){
 		perf_draw = memnew( Control );
 		perf_draw->connect("draw",this,"_performance_draw");
 		hsp->add_child(perf_draw);
-		hsp->set_name("Monitors");
+		hsp->set_name(TTR("Monitors"));
 		hsp->set_split_offset(300);
 		tabs->add_child(hsp);
 		perf_max.resize(Performance::MONITOR_MAX);
@@ -1929,7 +1941,7 @@ ScriptEditorDebugger::ScriptEditorDebugger(EditorNode *p_editor){
 	{ // misc
 		VBoxContainer *info_left = memnew( VBoxContainer );
 		info_left->set_h_size_flags(SIZE_EXPAND_FILL);
-		info_left->set_name("Misc");
+		info_left->set_name(TTR("Misc"));
 		tabs->add_child(info_left);
 		clicked_ctrl = memnew( LineEdit );
 		info_left->add_margin_child(TTR("Clicked Control:"),clicked_ctrl);

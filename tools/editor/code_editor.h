@@ -83,13 +83,18 @@ class FindReplaceBar : public HBoxContainer {
 
 	TextEdit *text_edit;
 
-	int current_result_line;
-	int current_result_col;
+	int result_line;
+	int result_col;
 
 	bool replace_all_mode;
+	bool preserve_cursor;
+
+	void _get_search_from(int& r_line, int& r_col);
 
 	void _show_search();
 	void _hide_bar();
+
+	void _editor_text_changed();
 	void _search_options_changed(bool p_pressed);
 	void _search_text_changed(const String& p_text);
 	void _search_text_entered(const String& p_text);
@@ -98,7 +103,7 @@ protected:
 	void _notification(int p_what);
 	void _unhandled_input(const InputEvent &p_event);
 
-	bool _search(bool p_include_current=false, bool p_backwards=false);
+	bool _search(uint32_t p_flags, int p_from_line, int p_from_col);
 
 	void _replace();
 	void _replace_all();
@@ -119,9 +124,9 @@ public:
 	void popup_search();
 	void popup_replace();
 
-	void search_current();
-	void search_prev();
-	void search_next();
+	bool search_current();
+	bool search_prev();
+	bool search_next();
 
 	FindReplaceBar();
 };
@@ -197,21 +202,26 @@ class CodeTextEditor : public VBoxContainer {
 	Timer *code_complete_timer;
 	bool enable_complete_timer;
 
+	Timer *font_resize_timer;
+	int font_resize_val;
+
 	Label *error;
 
 	void _on_settings_change();
 
 	void _update_font();
 	void _complete_request();
+	void _font_resize_timeout();
+
+	void _text_editor_input_event(const InputEvent& p_event);
+
 protected:
 
 	void set_error(const String& p_error);
 
-
 	virtual void _load_theme_settings() {}
 	virtual void _validate_script()=0;
 	virtual void _code_complete_script(const String& p_code, List<String>* r_options) {};
-
 
 	void _text_changed_idle_timeout();
 	void _code_complete_timer_timeout();
@@ -219,7 +229,6 @@ protected:
 	void _line_col_changed();
 	void _notification(int);
 	static void _bind_methods();
-
 
 public:
 

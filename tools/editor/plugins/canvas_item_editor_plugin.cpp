@@ -1382,6 +1382,8 @@ void CanvasItemEditor::_viewport_input_event(const InputEvent& p_event) {
 				se->undo_state=canvas_item->edit_get_state();
 				if (canvas_item->cast_to<Node2D>())
 					se->undo_pivot=canvas_item->cast_to<Node2D>()->edit_get_pivot();
+				if (canvas_item->cast_to<Control>())
+					se->undo_pivot=Vector2();
 				return;
 			}
 
@@ -1566,14 +1568,34 @@ void CanvasItemEditor::_viewport_input_event(const InputEvent& p_event) {
 			if (drag==DRAG_ROTATE) {
 
 				Vector2 center = canvas_item->get_global_transform_with_canvas().get_origin();
-				if (Node2D *node = canvas_item->cast_to<Node2D>()) {
-					Matrix32 rot;
-					rot.elements[1] = (dfrom - center).normalized();
-					rot.elements[0] = rot.elements[1].tangent();
-					node->set_rot(snap_angle(rot.xform_inv(dto-center).angle() + node->get_rot(), node->get_rot()));
-					display_rotate_to = dto;
-					display_rotate_from = center;
-					viewport->update();
+				{
+					Node2D *node = canvas_item->cast_to<Node2D>();
+
+
+					if (node) {
+						Matrix32 rot;
+						rot.elements[1] = (dfrom - center).normalized();
+						rot.elements[0] = rot.elements[1].tangent();
+						node->set_rot(snap_angle(rot.xform_inv(dto-center).angle() + node->get_rot(), node->get_rot()));
+						display_rotate_to = dto;
+						display_rotate_from = center;
+						viewport->update();
+					}
+				}
+
+				{
+					Control *node = canvas_item->cast_to<Control>();
+
+
+					if (node) {
+						Matrix32 rot;
+						rot.elements[1] = (dfrom - center).normalized();
+						rot.elements[0] = rot.elements[1].tangent();
+						node->set_rotation(snap_angle(rot.xform_inv(dto-center).angle() + node->get_rotation(), node->get_rotation()));
+						display_rotate_to = dto;
+						display_rotate_from = center;
+						viewport->update();
+					}
 				}
 
 				continue;
@@ -3441,7 +3463,7 @@ CanvasItemEditor::CanvasItemEditor(EditorNode *p_editor) {
 	animation_hb->add_child(key_insert_button);
 
 	animation_menu = memnew( MenuButton );
-	animation_menu->set_text("Animation");
+	animation_menu->set_text(TTR("Animation"));
 	animation_hb->add_child(animation_menu);
 	animation_menu->get_popup()->connect("item_pressed", this,"_popup_callback");
 

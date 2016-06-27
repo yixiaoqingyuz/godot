@@ -36,7 +36,6 @@
 #include "io/resource_saver.h"
 #include "os/os.h"
 #include "scene/gui/box_container.h"
-#include "default_saver.h"
 
 #include "scene/gui/tab_container.h"
 #include "scene/gui/scroll_container.h"
@@ -1057,7 +1056,7 @@ void ProjectExportDialog::_group_atlas_preview() {
 	imd->set_option("atlas",true);
 	imd->set_option("crop",true);
 
-	Ref<EditorTextureImportPlugin> plugin = EditorImportExport::get_singleton()->get_import_plugin_by_name("texture_atlas");
+	Ref<EditorTextureImportPlugin> plugin = EditorImportExport::get_singleton()->get_import_plugin_by_name("texture");
 	Error err = plugin->import2(dst_file,imd,EditorExportPlatform::IMAGE_COMPRESSION_NONE,true);
 	if (err) {
 
@@ -1384,7 +1383,7 @@ ProjectExportDialog::ProjectExportDialog(EditorNode *p_editor) {
 	group_images->set_column_expand(1,false);
 	group_images->set_column_min_width(1,100);
 	group_images->set_column_titles_visible(true);
-	group_images->set_column_title(0,"Image");
+	group_images->set_column_title(0,TTR("Images"));
 	group_images->set_column_title(1,TTR("Group"));
 	group_images->connect("item_edited",this,"_group_item_edited",varray(),CONNECT_DEFERRED);
 

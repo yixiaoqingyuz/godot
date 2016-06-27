@@ -31,6 +31,7 @@ for root, dirnames, filenames in os.walk('.'):
 		if (filename.find("collada") != -1):
 			continue
 		matches.append(os.path.join(root, filename))
+matches.sort()
 
 
 unique_str = []
@@ -39,6 +40,7 @@ main_po = """
 # LANGUAGE translation of the Godot Engine editor
 # Copyright (C) 2016 Juan Linietsky, Ariel Manzur and the Godot community
 # This file is distributed under the same license as the Godot source code.
+#
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
 #, fuzzy
@@ -59,11 +61,16 @@ for fname in matches:
 	lc = 1
 	while (l):
 
+		patterns = ['RTR(\"', 'TTR(\"']
+		idx = 0
 		pos = 0
 		while (pos >= 0):
-			pos = l.find('TTR(\"', pos)
+			pos = l.find(patterns[idx], pos)
 			if (pos == -1):
-				break
+				if (idx < len(patterns) - 1):
+					idx += 1
+					pos = 0
+				continue
 			pos += 5
 
 			msg = ""
@@ -100,7 +107,7 @@ f.write(main_po)
 f.close()
 
 if (os.name == "posix"):
-	os.system("msgmerge -w80 tools.pot tools.pot > tools.pot.wrap")
+	os.system("msgmerge -w79 tools.pot tools.pot > tools.pot.wrap")
 	shutil.move("tools.pot.wrap", "tools.pot")
 
 shutil.move("tools.pot", "tools/translations/tools.pot")

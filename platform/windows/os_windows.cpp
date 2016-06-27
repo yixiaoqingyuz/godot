@@ -57,13 +57,6 @@
 #include <regstr.h>
 #include <process.h>
 
-#if (_MSC_VER >= 1700)
-#define HIDPI_SUPPORT
-#endif
-
-#ifdef HIDPI_SUPPORT
-#include <ShellScalingAPI.h>
-#endif
 static const WORD MAX_CONSOLE_LINES = 1500;
 
 extern "C" {
@@ -611,8 +604,12 @@ LRESULT OS_Windows::WndProc(HWND hWnd,UINT uMsg, WPARAM	wParam,	LPARAM	lParam) {
 		} break;
 
 		case WM_SIZE: {
-			video_mode.width=LOWORD(lParam);
-			video_mode.height=HIWORD(lParam);
+			int window_w = LOWORD(lParam);
+			int window_h = HIWORD(lParam);
+			if (window_w > 0 && window_h > 0) {
+				video_mode.width = window_w;
+				video_mode.height = window_h;
+			}
 			//return 0;								// Jump Back
 		} break;
 		case WM_SYSKEYDOWN:
@@ -715,7 +712,7 @@ LRESULT OS_Windows::WndProc(HWND hWnd,UINT uMsg, WPARAM	wParam,	LPARAM	lParam) {
 		case WM_SETCURSOR: {
 
 			if(LOWORD(lParam) == HTCLIENT) {
-				if(mouse_mode == MOUSE_MODE_HIDDEN) {
+				if(mouse_mode == MOUSE_MODE_HIDDEN || mouse_mode == MOUSE_MODE_CAPTURED) {
 					//Hide the cursor
 					if(hCursor == NULL)
 						hCursor = SetCursor(NULL);
@@ -781,6 +778,8 @@ LRESULT CALLBACK WndProc(HWND	hWnd,UINT uMsg,	WPARAM	wParam,	LPARAM	lParam)	{
 
 }
 
+
+
 void OS_Windows::process_key_events() {
 
 	for(int i=0;i<key_event_pos;i++) {
@@ -800,7 +799,7 @@ void OS_Windows::process_key_events() {
 				    k.mod=ke.mod_state;
 				    k.pressed=true;
 				    k.scancode=KeyMappingWindows::get_keysym(ke.wParam);
-                    k.unicode=ke.wParam;
+				    k.unicode=ke.wParam;
 				    if (k.unicode && gr_mem) {
 					    k.mod.alt=false;
 					    k.mod.control=false;
@@ -852,6 +851,75 @@ void OS_Windows::process_key_events() {
 	key_event_pos=0;
 }
 
+enum _MonitorDpiType
+{
+	MDT_Effective_DPI  = 0,
+	MDT_Angular_DPI    = 1,
+	MDT_Raw_DPI        = 2,
+	MDT_Default        = MDT_Effective_DPI
+};
+
+
+static int QueryDpiForMonitor(HMONITOR hmon, _MonitorDpiType dpiType= MDT_Default)
+{
+
+
+	int dpiX = 96, dpiY = 96;
+
+	static HMODULE Shcore = NULL;
+	typedef HRESULT (WINAPI* GetDPIForMonitor_t)(HMONITOR hmonitor, _MonitorDpiType dpiType, UINT *dpiX, UINT *dpiY);
+	static GetDPIForMonitor_t getDPIForMonitor = NULL;
+
+	if (Shcore == NULL)
+	{
+		Shcore = LoadLibraryW(L"Shcore.dll");
+		getDPIForMonitor = Shcore ? (GetDPIForMonitor_t)GetProcAddress(Shcore, "GetDpiForMonitor") : NULL;
+
+		if ((Shcore == NULL) || (getDPIForMonitor == NULL))
+		{
+			if (Shcore)
+				FreeLibrary(Shcore);
+			Shcore = (HMODULE)INVALID_HANDLE_VALUE;
+		}
+	}
+
+	UINT x = 0, y = 0;
+	HRESULT hr = E_FAIL;
+	bool bSet = false;
+	if (hmon && (Shcore != (HMODULE)INVALID_HANDLE_VALUE))
+	{
+		hr = getDPIForMonitor(hmon, dpiType/*MDT_Effective_DPI*/, &x, &y);
+		if (SUCCEEDED(hr) && (x > 0) && (y > 0))
+		{
+
+			dpiX = (int)x;
+			dpiY = (int)y;
+		}
+	}
+	else
+	{
+		static int overallX = 0, overallY = 0;
+		if (overallX <= 0 || overallY <= 0)
+		{
+			HDC hdc = GetDC(NULL);
+			if (hdc)
+			{
+				overallX = GetDeviceCaps(hdc, LOGPIXELSX);
+				overallY = GetDeviceCaps(hdc, LOGPIXELSY);
+				ReleaseDC(NULL, hdc);
+			}
+		}
+		if (overallX > 0 && overallY > 0)
+		{
+			dpiX = overallX; dpiY = overallY;
+		}
+	}
+
+
+	return (dpiX+dpiY)/2;
+}
+
+
 BOOL CALLBACK OS_Windows::MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor,  LPARAM dwData) {
 	OS_Windows *self=(OS_Windows*)OS::get_singleton();
 	MonitorInfo minfo;
@@ -861,13 +929,9 @@ BOOL CALLBACK OS_Windows::MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPR
 	minfo.rect.pos.y=lprcMonitor->top;
 	minfo.rect.size.x=lprcMonitor->right - lprcMonitor->left;
 	minfo.rect.size.y=lprcMonitor->bottom - lprcMonitor->top;
-#ifdef HIDPI_SUPPORT
-	UINT dpix,dpiy;
-	GetDpiForMonitor(hMonitor,MDT_EFFECTIVE_DPI,&dpix,&dpiy);
-	minfo.dpi=(dpix + dpiy)/2;
-#else
-	minfo.dpi=72;
-#endif
+
+	minfo.dpi = QueryDpiForMonitor(hMonitor);
+
 	self->monitor_info.push_back(minfo);
 
 	return TRUE;
@@ -1774,6 +1838,11 @@ uint64_t OS_Windows::get_unix_time() const {
 };
 
 uint64_t OS_Windows::get_system_time_secs() const {
+
+
+	const uint64_t WINDOWS_TICK = 10000000;
+	const uint64_t SEC_TO_UNIX_EPOCH = 11644473600LL;
+
 	SYSTEMTIME st;
 	GetSystemTime(&st);
 	FILETIME ft;
@@ -1782,7 +1851,8 @@ uint64_t OS_Windows::get_system_time_secs() const {
 	ret=ft.dwHighDateTime;
 	ret<<=32;
 	ret|=ft.dwLowDateTime;
-	return ret;
+
+	return (uint64_t)(ret / WINDOWS_TICK - SEC_TO_UNIX_EPOCH);
 }
 
 void OS_Windows::delay_usec(uint32_t p_usec) const {
@@ -2183,7 +2253,7 @@ String OS_Windows::get_system_dir(SystemDir p_dir) const {
 }
 String OS_Windows::get_data_dir() const {
 
-	String an = Globals::get_singleton()->get("application/name");
+	String an = get_safe_application_name();
 	if (an!="") {
 
 		if (has_environment("APPDATA")) {
@@ -2208,6 +2278,21 @@ bool OS_Windows::is_joy_known(int p_device) {
 String OS_Windows::get_joy_guid(int p_device) const {
 	return input->get_joy_guid_remapped(p_device);
 }
+
+void OS_Windows::set_use_vsync(bool p_enable) {
+
+	if (gl_context)
+		gl_context->set_use_vsync(p_enable);
+}
+
+bool OS_Windows::is_vsnc_enabled() const{
+
+	if (gl_context)
+		return gl_context->is_using_vsync();
+
+	return true;
+}
+
 
 OS_Windows::OS_Windows(HINSTANCE _hInstance) {
 

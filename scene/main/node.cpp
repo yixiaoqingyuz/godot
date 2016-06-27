@@ -168,11 +168,8 @@ void Node::_propagate_enter_tree() {
 
 	data.inside_tree=true;
 
-	const StringName *K=NULL;
-
-	while ((K=data.grouped.next(K))) {
-
-		data.tree->add_to_group(*K,this);
+	for (Map< StringName, GroupData>::Element *E=data.grouped.front();E;E=E->next()) {
+		E->get().group=data.tree->add_to_group(E->key(),this);
 	}
 
 
@@ -257,12 +254,12 @@ void Node::_propagate_exit_tree() {
 		data.tree->node_removed(this);
 
 	// exit groups
-	const StringName *K=NULL;
 
-	while ((K=data.grouped.next(K))) {
-
-		data.tree->remove_from_group(*K,this);
+	for (Map< StringName, GroupData>::Element *E=data.grouped.front();E;E=E->next()) {
+		data.tree->remove_from_group(E->key(),this);
+		E->get().group=NULL;
 	}
+
 
 	data.viewport = NULL;
 
@@ -286,7 +283,11 @@ void Node::move_child(Node *p_child,int p_pos) {
 	ERR_FAIL_INDEX( p_pos, data.children.size()+1 );
 	ERR_EXPLAIN("child is not a child of this node.");
 	ERR_FAIL_COND(p_child->data.parent!=this);
-	ERR_FAIL_COND(data.blocked>0);
+	if (data.blocked>0) {
+		ERR_EXPLAIN("Parent node is busy setting up children, move_child() failed. Consider using call_deferred(\"move_child\") instead (or \"popup\" if this is from a popup).");
+		ERR_FAIL_COND(data.blocked>0);
+	}
+
 
 	data.children.remove( p_child->data.pos );
 	data.children.insert( p_pos, p_child );
@@ -306,6 +307,9 @@ void Node::move_child(Node *p_child,int p_pos) {
 	for (int i=0;i<data.children.size();i++) {
 		data.children[i]->notification( NOTIFICATION_MOVED_IN_PARENT );
 
+	}
+	for (const Map< StringName, GroupData>::Element *E=p_child->data.grouped.front();E;E=E->next()) {
+		E->get().group->changed=true;
 	}
 
 	data.blocked--;
@@ -739,6 +743,12 @@ void Node::add_child(Node *p_child, bool p_legible_unique_name) {
 	}
 	ERR_EXPLAIN("Can't add child, already has a parent");
 	ERR_FAIL_COND( p_child->data.parent );
+
+	if (data.blocked>0) {
+		ERR_EXPLAIN("Parent node is busy setting up children, add_node() failed. Consider using call_deferred(\"add_child\",child) instead.");
+		ERR_FAIL_COND(data.blocked>0);
+	}
+
 	ERR_EXPLAIN("Can't add child while a notification is happening");
 	ERR_FAIL_COND( data.blocked > 0 );
 
@@ -800,7 +810,10 @@ void Node::_propagate_validate_owner() {
 void Node::remove_child(Node *p_child) {
 
 	ERR_FAIL_NULL(p_child);
-	ERR_FAIL_COND( data.blocked > 0 );
+	if (data.blocked>0) {
+		ERR_EXPLAIN("Parent node is busy setting up children, remove_node() failed. Consider using call_deferred(\"remove_child\",child) instead.");
+		ERR_FAIL_COND(data.blocked>0);
+	}
 
 	int idx=-1;
 	for (int i=0;i<data.children.size();i++) {
@@ -1193,8 +1206,12 @@ void Node::add_to_group(const StringName& p_identifier,bool p_persistent) {
 
 	GroupData gd;
 
-	if (data.tree)
-		data.tree->add_to_group(p_identifier,this);
+	SceneTree::Group *gptr=NULL;
+	if (data.tree) {
+		gd.group=data.tree->add_to_group(p_identifier,this);
+	} else {
+		gd.group=NULL;
+	}
 
 	gd.persistent=p_persistent;
 
@@ -1207,14 +1224,15 @@ void Node::remove_from_group(const StringName& p_identifier) {
 
 	ERR_FAIL_COND(!data.grouped.has(p_identifier) );
 
-	GroupData *g=data.grouped.getptr(p_identifier);
 
-	ERR_FAIL_COND(!g);
+	Map< StringName, GroupData>::Element *E=data.grouped.find(p_identifier);
+
+	ERR_FAIL_COND(!E);
 
 	if (data.tree)
-		data.tree->remove_from_group(p_identifier,this);
+		data.tree->remove_from_group(E->key(),this);
 
-	data.grouped.erase(p_identifier);
+	data.grouped.erase(E);
 
 }
 
@@ -1232,19 +1250,29 @@ Array Node::_get_groups() const {
 
 void Node::get_groups(List<GroupInfo> *p_groups) const {
 
-	const StringName *K=NULL;
 
-	while ((K=data.grouped.next(K))) {
-
+	for (const Map< StringName, GroupData>::Element *E=data.grouped.front();E;E=E->next()) {
 		GroupInfo gi;
-		gi.name=*K;
-		gi.persistent=data.grouped[*K].persistent;
+		gi.name=E->key();
+		gi.persistent=E->get().persistent;
 		p_groups->push_back(gi);
 	}
 
 }
 
+bool Node::has_persistent_groups() const {
 
+
+	for (const Map< StringName, GroupData>::Element *E=data.grouped.front();E;E=E->next()) {
+		if (E->get().persistent)
+			return true;
+	}
+
+
+	return false;
+
+
+}
 void Node::_print_tree(const Node *p_node) {
 
 	print_line(String(p_node->get_path_to(this)));
@@ -1755,6 +1783,8 @@ void Node::replace_by(Node* p_node,bool p_keep_data) {
 		}
 	}
 
+	_replace_connections_target(p_node);
+
 	if (data.owner) {
 		for(int i=0;i<get_child_count();i++)
 			find_owned_by(data.owner,get_child(i),&owned_by_owner);
@@ -1791,6 +1821,20 @@ void Node::replace_by(Node* p_node,bool p_keep_data) {
 		p_node->set(E->get().name,E->get().value);
 	}
 
+}
+
+void Node::_replace_connections_target(Node* p_new_target) {
+
+	List<Connection> cl;
+	get_signals_connected_to_this(&cl);
+
+	for(List<Connection>::Element *E=cl.front();E;E=E->next()) {
+
+		Connection &c=E->get();
+
+		c.source->disconnect(c.signal,this,c.method);
+		c.source->connect(c.signal,p_new_target,c.method,c.binds,c.flags);
+	}
 }
 
 Vector<Variant> Node::make_binds(VARIANT_ARG_DECLARE) {
@@ -2035,6 +2079,10 @@ void Node::update_configuration_warning() {
 	}
 #endif
 
+}
+
+bool Node::is_owned_by_parent() const {
+	return data.parent_owned;
 }
 
 void Node::_bind_methods() {

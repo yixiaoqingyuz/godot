@@ -63,14 +63,9 @@ elif (os.name=="nt"):
 	if (os.getenv("VSINSTALLDIR")==None or platform_arg=="android"):
 		custom_tools=['mingw']
 
-env_base=Environment(
-	tools=custom_tools,
-	ENV={
-		'PATH' : os.getenv('PATH'),
-		'PKG_CONFIG_PATH' : os.getenv('PKG_CONFIG_PATH')
-});
-
-#env_base=Environment(tools=custom_tools);
+env_base=Environment(tools=custom_tools);
+env_base.AppendENVPath('PATH', os.getenv('PATH'))
+env_base.AppendENVPath('PKG_CONFIG_PATH', os.getenv('PKG_CONFIG_PATH'))
 env_base.global_defaults=global_defaults
 env_base.android_maven_repos=[]
 env_base.android_dependencies=[]
@@ -82,7 +77,7 @@ env_base.android_manifest_chunk=""
 env_base.android_permission_chunk=""
 env_base.android_appattributes_chunk=""
 env_base.disabled_modules=[]
-
+env_base.use_ptrcall=False
 env_base.split_drivers=False
 
 
@@ -117,6 +112,7 @@ if profile:
 
 opts=Variables(customs, ARGUMENTS)
 opts.Add('target', 'Compile Target (debug/release_debug/release).', "debug")
+opts.Add('arch', 'Platform dependent architecture (arm/arm64/x86/x64/mips/etc)', "")
 opts.Add('bits', 'Compile Target Bits (default/32/64/fat).', "default")
 opts.Add('platform','Platform: '+str(platform_list)+'.',"")
 opts.Add('p','Platform (same as platform=).',"")
@@ -128,7 +124,7 @@ opts.Add('minizip','Build Minizip Archive Support: (yes/no)','yes')
 opts.Add('squish','Squish BC Texture Compression in editor (yes/no)','yes')
 opts.Add('theora','Theora Video (yes/no)','yes')
 opts.Add('theoralib','Theora Video (yes/no)','no')
-opts.Add('freetype','Freetype support in editor','yes')
+opts.Add('freetype','Freetype support in editor','builtin')
 opts.Add('speex','Speex Audio (yes/no)','yes')
 opts.Add('xml','XML Save/Load support (yes/no)','yes')
 opts.Add('png','PNG Image loader support (yes/no)','yes')
@@ -195,6 +191,7 @@ elif env_base['p'] != "":
 	env_base["platform"]=selected_platform
 
 
+
 if selected_platform in platform_list:
 
 	sys.path.append("./platform/"+selected_platform)
@@ -251,6 +248,14 @@ if selected_platform in platform_list:
 	#must happen after the flags, so when flags are used by configure, stuff happens (ie, ssl on x11)
 	detect.configure(env)
 
+
+	if (env["freetype"]!="no"):
+		env.Append(CCFLAGS=['-DFREETYPE_ENABLED'])
+		if (env["freetype"]=="builtin"):
+			env.Append(CPPPATH=['#drivers/freetype'])
+			env.Append(CPPPATH=['#drivers/freetype/freetype/include'])
+
+
 	#env['platform_libsuffix'] = env['LIBSUFFIX']
 
 	suffix="."+selected_platform
@@ -272,7 +277,9 @@ if selected_platform in platform_list:
 		else:
 			suffix+=".debug"
 
-	if (env["bits"]=="32"):
+	if env["arch"] != "":
+		suffix += "."+env["arch"]
+	elif (env["bits"]=="32"):
 		suffix+=".32"
 	elif (env["bits"]=="64"):
 		suffix+=".64"
@@ -305,6 +312,9 @@ if selected_platform in platform_list:
 		sys.path.remove(tmppath)
 		sys.modules.pop('config')
 
+
+	if (env.use_ptrcall):
+		env.Append(CPPFLAGS=['-DPTRCALL_ENABLED']);
 
 	if (env['musepack']=='yes'):
 		env.Append(CPPFLAGS=['-DMUSEPACK_ENABLED']);

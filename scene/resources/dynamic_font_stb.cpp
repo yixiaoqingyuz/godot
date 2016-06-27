@@ -142,7 +142,7 @@ Size2 DynamicFontAtSize::get_char_size(CharType p_char,CharType p_next) const {
 }
 
 
-float DynamicFontAtSize::draw_char(RID p_canvas_item, const Point2& p_pos, const CharType& p_char,const CharType& p_next,const Color& p_modulate) const {
+float DynamicFontAtSize::draw_char(RID p_canvas_item, const Point2& p_pos, CharType p_char,CharType p_next,const Color& p_modulate) const {
 
 	const_cast<DynamicFontAtSize*>(this)->_update_char(p_char);
 
@@ -384,8 +384,8 @@ void DynamicFont::_bind_methods() {
 	ObjectTypeDB::bind_method(_MD("set_size","data"),&DynamicFont::set_size);
 	ObjectTypeDB::bind_method(_MD("get_size"),&DynamicFont::get_size);
 
-	ADD_PROPERTY(PropertyInfo(Variant::INT,"size"),_SCS("set_size"),_SCS("get_size"));
-	ADD_PROPERTY(PropertyInfo(Variant::OBJECT,"font",PROPERTY_HINT_RESOURCE_TYPE,"DynamicFontData"),_SCS("set_font_data"),_SCS("get_font_data"));
+	ADD_PROPERTY(PropertyInfo(Variant::INT,"font/size"),_SCS("set_size"),_SCS("get_size"));
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT,"font/font",PROPERTY_HINT_RESOURCE_TYPE,"DynamicFontData"),_SCS("set_font_data"),_SCS("get_font_data"));
 }
 
 
@@ -455,7 +455,7 @@ bool DynamicFont::is_distance_field_hint() const{
 	return false;
 }
 
-float DynamicFont::draw_char(RID p_canvas_item, const Point2& p_pos, const CharType& p_char,const CharType& p_next,const Color& p_modulate) const {
+float DynamicFont::draw_char(RID p_canvas_item, const Point2& p_pos, CharType p_char,CharType p_next,const Color& p_modulate) const {
 
 	if (!data_at_size.is_valid())
 		return 0;

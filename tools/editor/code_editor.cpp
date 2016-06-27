@@ -30,6 +30,7 @@
 #include "editor_settings.h"
 #include "scene/gui/margin_container.h"
 #include "scene/gui/separator.h"
+#include "scene/resources/dynamic_font.h"
 #include "os/keyboard.h"
 
 void GotoLineDialog::popup_find_line(TextEdit *p_edit) {
@@ -122,82 +123,30 @@ void FindReplaceBar::_unhandled_input(const InputEvent &p_event) {
 	}
 }
 
-bool FindReplaceBar::_search(bool p_include_current, bool p_backwards) {
+bool FindReplaceBar::_search(uint32_t p_flags, int p_from_line, int p_from_col) {
 
+	int line, col;
 	String text=get_search_text();
-	uint32_t flags=0;
 
-	if (is_whole_words())
-		flags|=TextEdit::SEARCH_WHOLE_WORDS;
-	if (is_case_sensitive())
-		flags|=TextEdit::SEARCH_MATCH_CASE;
-	if (p_backwards)
-		flags|=TextEdit::SEARCH_BACKWARDS;
-
-	int line=text_edit->cursor_get_line();
-	int col=text_edit->cursor_get_column();
-
-	if (text_edit->is_selection_active() && !replace_all_mode) {
-		line = text_edit->get_selection_from_line();
-		col = text_edit->get_selection_from_column();
-	}
-
-	bool cursor_at_result=false;
-
-	if (line==current_result_line && col>=current_result_col && col<=current_result_col+text.length()) {
-		col=current_result_col;
-		cursor_at_result=true;
-	}
-
-	if (!p_include_current) {
-		if (p_backwards) {
-			col-=text.length();
-			if (col<0) {
-				line-=1;
-				if (line<0)
-					line=text_edit->get_line_count()-1;
-				col=text_edit->get_line(line).length();
-			}
-		} else if (cursor_at_result) {
-			col+=text.length();
-			if (col>text_edit->get_line(line).length()) {
-				line+=1;
-				if (line>=text_edit->get_line_count())
-					line=0;
-				col=0;
-			}
-		}
-	}
-
-	bool found = text_edit->search(text,flags,line,col,line,col);
-
-	if (!found) {
-		if (p_backwards) {
-			line = text_edit->get_line_count()-1;
-			col = text_edit->get_line(line).length()-1;
-		} else {
-			line = 0;
-			col = 0;
-		}
-
-		found = text_edit->search(text,flags,line,col,line,col);
-	}
+	bool found=text_edit->search(text,p_flags,p_from_line,p_from_col,line,col);
 
 	if (found) {
-		text_edit->cursor_set_line(line);
-		text_edit->cursor_set_column(p_backwards?col:col+text.length());
-		text_edit->select(line,col,line,col+text.length());
+		if (!preserve_cursor) {
+			text_edit->cursor_set_line(line);
+			text_edit->cursor_set_column(col+text.length());
+		}
+
 		text_edit->set_search_text(text);
-		text_edit->set_search_flags(flags);
+		text_edit->set_search_flags(p_flags);
 		text_edit->set_current_search_result(line,col);
 
-		current_result_line = line;
-		current_result_col = col;
+		result_line=line;
+		result_col=col;
 
 		set_error("");
 	} else {
-		current_result_line = -1;
-		current_result_col = -1;
+		result_line=-1;
+		result_col=-1;
 		text_edit->set_search_text("");
 		set_error(text.empty()?"":TTR("No Matches"));
 	}
@@ -207,8 +156,13 @@ bool FindReplaceBar::_search(bool p_include_current, bool p_backwards) {
 
 void FindReplaceBar::_replace() {
 
-	if (text_edit->get_selection_text()==get_search_text()) {
+	if (result_line!=-1 && result_col!=-1) {
+		text_edit->begin_complex_operation();
+
+		text_edit->select(result_line,result_col,result_line,result_col+get_search_text().length());
 		text_edit->insert_text_at_cursor(get_replace_text());
+
+		text_edit->end_complex_operation();
 	}
 
 	search_current();
@@ -232,27 +186,25 @@ void FindReplaceBar::_replace_all() {
 	text_edit->cursor_set_line(0);
 	text_edit->cursor_set_column(0);
 
+	int search_text_len=get_search_text().length();
 	int rc=0;
 
 	replace_all_mode = true;
 
 	text_edit->begin_complex_operation();
 
-	while(_search(false)) {
-
-		if (!text_edit->is_selection_active()) {
-			// search selects
-			break;
-		}
+	while (search_next()) {
 
 		// replace area
-		Point2i match_from(text_edit->get_selection_from_line(),text_edit->get_selection_from_column());
-		Point2i match_to(text_edit->get_selection_to_line(),text_edit->get_selection_to_column());
+		Point2i match_from(result_line,result_col);
+		Point2i match_to(result_line,result_col+search_text_len);
 
 		if (match_from < prev_match)
 			break; // done
 
 		prev_match=match_to;
+
+		text_edit->select(result_line,result_col,result_line,match_to.y);
 
 		if (selection_enabled && is_selection_only()) {
 
@@ -264,7 +216,7 @@ void FindReplaceBar::_replace_all() {
 			if (match_to.x==selection_end.x)
 				selection_end.y+=get_replace_text().length() - get_search_text().length();
 		} else {
-			//just replace
+			// just replace
 			text_edit->insert_text_at_cursor(get_replace_text());
 		}
 
@@ -290,26 +242,106 @@ void FindReplaceBar::_replace_all() {
 	set_error(vformat(TTR("Replaced %d Ocurrence(s)."), rc));
 }
 
-void FindReplaceBar::search_current() {
+void FindReplaceBar::_get_search_from(int& r_line, int& r_col) {
 
-	_search(true);
+	r_line=text_edit->cursor_get_line();
+	r_col=text_edit->cursor_get_column();
+
+	if (text_edit->is_selection_active() && !replace_all_mode) {
+
+		int selection_line=text_edit->get_selection_from_line();
+
+		if (text_edit->get_selection_text()==get_search_text() && r_line==selection_line) {
+
+			int selection_from_col=text_edit->get_selection_from_column();
+
+			if (r_col>=selection_from_col && r_col<=text_edit->get_selection_to_column()) {
+				r_col=selection_line;
+				r_col=selection_from_col;
+			}
+		}
+	}
+
+	if (r_line==result_line && r_col>=result_col && r_col<=result_col+get_search_text().length()) {
+		r_col=result_col;
+	}
 }
 
-void FindReplaceBar::search_prev() {
+bool FindReplaceBar::search_current() {
 
-	_search(false, true);
+	uint32_t flags=0;
+
+	if (is_whole_words())
+		flags|=TextEdit::SEARCH_WHOLE_WORDS;
+	if (is_case_sensitive())
+		flags|=TextEdit::SEARCH_MATCH_CASE;
+
+	int line, col;
+	_get_search_from(line, col);
+
+	return _search(flags,line,col);
 }
 
-void FindReplaceBar::search_next() {
+bool FindReplaceBar::search_prev() {
 
-	_search();
+	uint32_t flags=0;
+	String text = get_search_text();
+
+	if (is_whole_words())
+		flags|=TextEdit::SEARCH_WHOLE_WORDS;
+	if (is_case_sensitive())
+		flags|=TextEdit::SEARCH_MATCH_CASE;
+
+	flags|=TextEdit::SEARCH_BACKWARDS;
+
+	int line, col;
+	_get_search_from(line, col);
+
+	col-=text.length();
+	if (col<0) {
+		line-=1;
+		if (line<0)
+			line=text_edit->get_line_count()-1;
+		col=text_edit->get_line(line).length();
+	}
+
+	return _search(flags,line,col);
+}
+
+bool FindReplaceBar::search_next() {
+
+	uint32_t flags=0;
+	String text = get_search_text();
+
+	if (is_whole_words())
+		flags|=TextEdit::SEARCH_WHOLE_WORDS;
+	if (is_case_sensitive())
+		flags|=TextEdit::SEARCH_MATCH_CASE;
+
+	int line, col;
+	_get_search_from(line, col);
+
+	if (line==result_line && col==result_col) {
+		col+=text.length();
+		if (col>text_edit->get_line(line).length()) {
+			line+=1;
+			if (line>=text_edit->get_line_count())
+				line=0;
+			col=0;
+		}
+	}
+
+	return _search(flags,line,col);
 }
 
 void FindReplaceBar::_hide_bar() {
 
+	if (replace_text->has_focus() || search_text->has_focus())
+		text_edit->grab_focus();
+
 	text_edit->set_search_text("");
-	current_result_line = -1;
-	current_result_col = -1;
+	result_line = -1;
+	result_col = -1;
 	replace_hbc->hide();
 	replace_options_hbc->hide();
 	hide();
@@ -352,6 +384,15 @@ void FindReplaceBar::popup_replace() {
 void FindReplaceBar::_search_options_changed(bool p_pressed) {
 
 	search_current();
+}
+
+void FindReplaceBar::_editor_text_changed() {
+
+	if (is_visible()) {
+		preserve_cursor=true;
+		search_current();
+		preserve_cursor=false;
+	}
 }
 
 void FindReplaceBar::_search_text_changed(const String& p_text) {
@@ -397,13 +438,14 @@ void FindReplaceBar::set_error(const String &p_label) {
 void FindReplaceBar::set_text_edit(TextEdit *p_text_edit) {
 
 	text_edit = p_text_edit;
-	text_edit->connect("_text_changed",this,"_search_text_changed",varray(String()));
+	text_edit->connect("text_changed",this,"_editor_text_changed");
 }
 
 void FindReplaceBar::_bind_methods() {
 
 	ObjectTypeDB::bind_method("_unhandled_input",&FindReplaceBar::_unhandled_input);
 
+	ObjectTypeDB::bind_method("_editor_text_changed",&FindReplaceBar::_editor_text_changed);
 	ObjectTypeDB::bind_method("_search_text_changed",&FindReplaceBar::_search_text_changed);
 	ObjectTypeDB::bind_method("_search_text_entered",&FindReplaceBar::_search_text_entered);
 	ObjectTypeDB::bind_method("_search_current",&FindReplaceBar::search_current);
@@ -418,6 +460,9 @@ void FindReplaceBar::_bind_methods() {
 }
 
 FindReplaceBar::FindReplaceBar() {
+
+	replace_all_mode=false;
+	preserve_cursor=false;
 
 	text_vbc = memnew(VBoxContainer);
 	add_child(text_vbc);
@@ -487,6 +532,9 @@ FindReplaceBar::FindReplaceBar() {
 
 	error_label = memnew(Label);
 	search_options->add_child(error_label);
+	error_label->add_color_override("font_color", Color(1,1,0,1));
+	error_label->add_color_override("font_color_shadow", Color(0,0,0,1));
+	error_label->add_constant_override("shadow_as_outline", 1);
 
 	search_options->add_spacer();
 
@@ -927,6 +975,48 @@ FindReplaceDialog::FindReplaceDialog() {
 
 /*** CODE EDITOR ****/
 
+void CodeTextEditor::_text_editor_input_event(const InputEvent& p_event) {
+
+	if (p_event.type==InputEvent::MOUSE_BUTTON) {
+
+		const InputEventMouseButton& mb=p_event.mouse_button;
+
+		if (mb.pressed && mb.mod.command) {
+
+			if (mb.button_index==BUTTON_WHEEL_UP) {
+
+				font_resize_val+=1;
+
+				if (font_resize_timer->get_time_left()==0)
+					font_resize_timer->start();
+
+			} else if (mb.button_index==BUTTON_WHEEL_DOWN) {
+
+				font_resize_val-=1;
+
+				if (font_resize_timer->get_time_left()==0)
+					font_resize_timer->start();
+			}
+		}
+	} else if (p_event.type==InputEvent::KEY) {
+
+		const InputEventKey& k=p_event.key;
+
+		if (k.pressed && k.mod.command) {
+
+			if (k.scancode==KEY_0) { // reset source font size to default
+
+				Ref<DynamicFont> font = text_editor->get_font("font");
+
+				if (font.is_valid()) {
+					EditorSettings::get_singleton()->set("global/source_font_size",14);
+					font->set_size(14);
+				}
+			}
+		}
+	}
+}
+
 void CodeTextEditor::_line_col_changed() {
 
 	String text = String()+TTR("Line:")+" "+itos(text_editor->cursor_get_line()+1)+", "+TTR("Col:")+" "+itos(text_editor->cursor_get_column());
@@ -964,6 +1054,22 @@ void CodeTextEditor::_complete_request() {
 	text_editor->code_complete(strs);
 }
 
+void CodeTextEditor::_font_resize_timeout() {
+
+	Ref<DynamicFont> font = text_editor->get_font("font");
+
+	if (font.is_valid()) {
+		int size=font->get_size()+font_resize_val;
+
+		if (size>=8 && size<=96) {
+			EditorSettings::get_singleton()->set("global/source_font_size",size);
+			font->set_size(size);
+		}
+
+		font_resize_val=0;
+	}
+}
+
 void CodeTextEditor::set_error(const String& p_error) {
 
 	if (p_error!="") {
@@ -979,15 +1085,15 @@ void CodeTextEditor::_update_font() {
 
 	// FONTS
 	String editor_font = EDITOR_DEF("text_editor/font", "");
-	bool font_overrode = false;
+	bool font_overridden = false;
 	if (editor_font!="") {
 		Ref<Font> fnt = ResourceLoader::load(editor_font);
 		if (fnt.is_valid()) {
 			text_editor->add_font_override("font",fnt);
-			font_overrode = true;
+			font_overridden = true;
 		}
 	}
-	if(!font_overrode)
+	if(!font_overridden)
 		text_editor->add_font_override("font",get_font("source","EditorFonts"));
 }
 
@@ -1031,12 +1137,14 @@ void CodeTextEditor::_notification(int p_what) {
 
 void CodeTextEditor::_bind_methods() {
 
+	ObjectTypeDB::bind_method("_text_editor_input_event",&CodeTextEditor::_text_editor_input_event);
 	ObjectTypeDB::bind_method("_line_col_changed",&CodeTextEditor::_line_col_changed);
 	ObjectTypeDB::bind_method("_text_changed",&CodeTextEditor::_text_changed);
 	ObjectTypeDB::bind_method("_on_settings_change",&CodeTextEditor::_on_settings_change);
 	ObjectTypeDB::bind_method("_text_changed_idle_timeout",&CodeTextEditor::_text_changed_idle_timeout);
 	ObjectTypeDB::bind_method("_code_complete_timer_timeout",&CodeTextEditor::_code_complete_timer_timeout);
 	ObjectTypeDB::bind_method("_complete_request",&CodeTextEditor::_complete_request);
+	ObjectTypeDB::bind_method("_font_resize_timeout",&CodeTextEditor::_font_resize_timeout);
 }
 
 CodeTextEditor::CodeTextEditor() {
@@ -1092,6 +1200,7 @@ CodeTextEditor::CodeTextEditor() {
 	line_col->set_valign(Label::VALIGN_CENTER);
 
 
+	text_editor->connect("input_event", this,"_text_editor_input_event");
 	text_editor->connect("cursor_changed", this,"_line_col_changed");
 	text_editor->connect("text_changed", this,"_text_changed");
 	text_editor->connect("request_completion", this,"_complete_request");
@@ -1103,6 +1212,13 @@ CodeTextEditor::CodeTextEditor() {
 	idle->connect("timeout", this,"_text_changed_idle_timeout");
 
 	code_complete_timer->connect("timeout", this,"_code_complete_timer_timeout");
+
+	font_resize_val=0;
+	font_resize_timer = memnew(Timer);
+	add_child(font_resize_timer);
+	font_resize_timer->set_one_shot(true);
+	font_resize_timer->set_wait_time(0.07);
+	font_resize_timer->connect("timeout", this, "_font_resize_timeout");
 
 	EditorSettings::get_singleton()->connect("settings_changed",this,"_on_settings_change");
 }
